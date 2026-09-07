@@ -45,3 +45,29 @@
 /* The bars are wide (miasma 1360x236, damage-control 680x164); give the panel room rather than
  * letting GPC's default column squeeze them to nothing. */
 #clock-panel .clock-display { width: 320px; }
+
+/* The sheet publishing bar (0.3.0). A GM-only strip at the top of a player-owned character's
+ * sheet, because the 0.2.0 actions lived in the window's "..." dropdown and were, in practice,
+ * invisible. Deliberately plain: it is a tool, not decoration, and it sits on sheet classes we
+ * do not control (projectfu's included), so it must not fight their styling. */
+.rh-sheet-bar {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-wrap: wrap;
+	margin: 0 0 6px;
+	padding: 4px 8px;
+	border: 1px solid rgba(200, 16, 42, 0.55);
+	border-radius: 3px;
+	background: rgba(10, 5, 7, 0.28);
+	font-size: 12px;
+}
+.rh-sheet-bar-label { flex: 1 1 auto; opacity: 0.85; }
+.rh-sheet-bar .rh-sheet-btn {
+	flex: 0 0 auto;
+	width: auto;
+	line-height: normal;
+	padding: 2px 8px;
+	font-size: 12px;
+	white-space: nowrap;
+}

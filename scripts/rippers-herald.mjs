@@ -410,9 +410,56 @@ async function copySheetLink(actor) {
 		return null;
 	}
 	await pushSheet(actor, 'copy-link');
-	await game.clipboard?.copyPlainText?.(url);
-	ui.notifications?.info(`Sheet link copied for ${actor.name}.`);
+	// The clipboard can refuse — an insecure context, a browser permission, a headless client. The
+	// link is already minted and pushed by this point, so a refusal must not read as a failure:
+	// show the GM the URL instead of an error he cannot act on.
+	try {
+		await game.clipboard?.copyPlainText?.(url);
+		ui.notifications?.info(`Sheet link copied for ${actor.name}.`);
+	} catch (err) {
+		warn('clipboard refused the copy; showing the link instead', err);
+		ui.notifications?.warn(`Could not reach the clipboard. The link for ${actor.name} is: ${url}`, { permanent: true });
+	}
 	return url;
+}
+
+/**
+ * THE VISIBLE CONTROL — a GM-only bar in the sheet BODY.
+ *
+ * Why this exists: 0.2.0 shipped the copy/regenerate actions as ApplicationV2 *header controls*,
+ * and Foundry 13 puts those in the window's "..." dropdown. The owner opened a sheet, saw nothing,
+ * and reasonably concluded the feature was missing. An action a GM has to know exists in order to
+ * find is not a feature.
+ *
+ * THE DISPLAY GATE IS THE PUSH GATE, moved up. The bar renders only when sheet publishing is ON and
+ * the actor is actually player-owned — so seeing the control IS the proof that this character
+ * publishes. In 0.2.0 the buttons appeared on every character sheet including GM-only NPCs, where
+ * they would mint a token that never published anything: a control that lies about what it will do.
+ */
+function sheetBodyControls(app, html) {
+	const actor = app?.actor ?? app?.document;
+	if (!actor || actor.documentName !== 'Actor' || actor.type !== 'character') return;
+	if (!game.user?.isGM) return;
+	if (!setting(S.sheets)) return;
+	if (!playerOwned(actor)) return;
+
+	const root = html instanceof HTMLElement ? html : html?.[0];
+	if (!root) return;
+	if (root.querySelector('.rh-sheet-bar')) return;   // renders can fire more than once
+
+	const bar = document.createElement('div');
+	bar.className = 'rh-sheet-bar';
+	const token = sheetToken(actor);
+	bar.innerHTML = `
+		<span class="rh-sheet-bar-label">${token ? 'Published to the companion site' : 'Publishes to the companion site'}</span>
+		<button type="button" class="rh-sheet-btn" data-rh="copy"><i class="fas fa-link"></i> Copy link</button>
+		<button type="button" class="rh-sheet-btn" data-rh="regen"><i class="fas fa-rotate"></i> New link</button>`;
+	bar.querySelector('[data-rh="copy"]').addEventListener('click', (e) => { e.preventDefault(); copySheetLink(actor); });
+	bar.querySelector('[data-rh="regen"]').addEventListener('click', (e) => { e.preventDefault(); confirmRegenerate(actor); });
+
+	// Into the sheet's own body, at the top, whatever the sheet class calls its content element.
+	const host = root.querySelector('.window-content') ?? root;
+	host.prepend(bar);
 }
 
 /**
@@ -425,6 +472,9 @@ function sheetHeaderControls(app, controls) {
 	const actor = app?.actor ?? app?.document;
 	if (!actor || !game.user?.isGM) return;
 	if (actor.type !== 'character') return;
+	// Same gate as the visible bar: a dropdown entry that mints a token for an actor nobody owns
+	// is the same lie in a quieter place.
+	if (!setting(S.sheets) || !playerOwned(actor)) return;
 	controls.unshift(
 		{
 			label: 'Copy sheet link',
@@ -456,8 +506,13 @@ async function confirmRegenerate(actor) {
 	if (!proceed) return null;
 	const url = await regenerateSheetLink(actor);
 	if (url) {
-		await game.clipboard?.copyPlainText?.(url);
-		ui.notifications?.info(`New sheet link copied for ${actor.name}.`);
+		try {
+			await game.clipboard?.copyPlainText?.(url);
+			ui.notifications?.info(`New sheet link copied for ${actor.name}.`);
+		} catch (err) {
+			warn('clipboard refused the copy; showing the link instead', err);
+			ui.notifications?.warn(`Could not reach the clipboard. The new link for ${actor.name} is: ${url}`, { permanent: true });
+		}
 	}
 	return url;
 }
@@ -649,8 +704,15 @@ Hooks.once('init', () => {
 	Hooks.on('createSetting', (s) => { if (isGpcSetting(s)) scheduleClocks('createSetting'); });
 	Hooks.on('renderClockPanel', paintClockFaces);
 
+	// Header controls: `getHeaderControls` + the class name, walked up the inheritance chain
+	// (Application#_doEvent -> #callHooks), so ApplicationV2 catches every V2 sheet class including
+	// projectfu's; the V1 name is kept for any sheet still on the old base.
 	Hooks.on('getHeaderControlsApplicationV2', sheetHeaderControls);
 	Hooks.on('getActorSheetHeaderButtons', sheetHeaderControls);
+	// The visible bar. Same chain rule: renderApplicationV2 fires for every V2 sheet, renderActorSheet
+	// for V1 ones. Both are filtered down to character sheets inside.
+	Hooks.on('renderApplicationV2', sheetBodyControls);
+	Hooks.on('renderActorSheet', sheetBodyControls);
 });
 
 /**
@@ -690,6 +752,7 @@ Hooks.once('ready', () => {
 			buildSheetBody,
 			regenerateSheetLink,
 			copySheetLink,
+			sheetBodyControls,
 			guiseApi,
 			// clocks (v3)
 			pushClocks,

@@ -8,5 +8,9 @@
 	"RIPPERS_HERALD.Settings.Verbose.Name": "Log every push",
 	"RIPPERS_HERALD.Settings.Verbose.Hint": "Writes one console line per successful push. Failures are always logged.",
 	"RIPPERS_HERALD.Settings.Sheets.Name": "Publish player sheets",
-	"RIPPERS_HERALD.Settings.Sheets.Hint": "Pushes the character export for any actor a player owns, so they can read it at /sheet/<link>. GM-only actors are never published. Off stops publishing but does not withdraw what is already there — use Regenerate sheet link on an actor for that."
+	"RIPPERS_HERALD.Settings.Sheets.Hint": "Pushes the character export for any actor a player owns, so they can read it at /sheet/<link>. GM-only actors are never published. Off stops publishing but does not withdraw what is already there — use Regenerate sheet link on an actor for that.",
+	"RIPPERS_HERALD.Settings.Clocks.Name": "Publish revealed clocks",
+	"RIPPERS_HERALD.Settings.Clocks.Hint": "Pushes Global Progress Clocks entries to the companion site. A clock marked private in GPC is never published, and a clock you make private is withdrawn from the site. There is deliberately no override.",
+	"RIPPERS_HERALD.Settings.Faces.Name": "Use Rippers clock faces",
+	"RIPPERS_HERALD.Settings.Faces.Hint": "Draws our own art on the Global Progress Clocks panel in place of its default pie, for clocks whose name and segment count match a face we ship (Miasma, 6 segments; Damage Control, 3). Anything else keeps GPC's own drawing. Off restores GPC everywhere."
 }

@@ -10,6 +10,8 @@
 // Calendaria supplies the pretty string and nothing else. If Calendaria is disabled
 // or swapped out, the push still carries a correct clock and only `display` degrades.
 
+import { clockOps, faceFor, revealedClocks } from './clocks.mjs';
+
 const MODULE_ID = 'rippers-herald';
 const DEBOUNCE_MS = 2000;
 
@@ -19,6 +21,8 @@ const S = {
 	sharedSecret: 'sharedSecret',
 	enabled: 'enabled',
 	sheets: 'sheets',
+	clocks: 'clocks',
+	faces: 'faces',
 	verbose: 'verbose',
 };
 
@@ -458,6 +462,95 @@ async function confirmRegenerate(actor) {
 	return url;
 }
 
+// ===========================================================================================
+// CLOCKS (v3) — lodge-docs/SPEC-herald-clocks.md
+//
+// Two halves that share one resolver (scripts/clocks.mjs): the PUSH, which files revealed
+// clocks as district_clocks rows, and the FACES, which dress GPC's own panel in our art.
+// ===========================================================================================
+
+const GPC_ID = 'global-progress-clocks';
+const GPC_SETTING = 'activeClocks';
+/** Ids we have published, so a clock that goes private can be WITHDRAWN rather than merely
+ *  going stale. Withdrawal is the half that matters: a secret that stops updating is still a
+ *  secret on a public page. */
+let sentClockIds = [];
+let clockTimer = null;
+
+function gpcClocks() {
+	if (!game.modules.get(GPC_ID)?.active) return null;
+	try {
+		return game.settings.get(GPC_ID, GPC_SETTING) ?? {};
+	} catch {
+		return null;   // the setting does not exist until the first clock is ever made
+	}
+}
+
+function buildClockBody() {
+	const active = gpcClocks();
+	if (active === null) return null;
+	const ops = clockOps(active, sentClockIds);
+	if (!ops.length) return null;
+	return { worldId: game.world?.id ?? null, kind: 'clock', ops };
+}
+
+async function pushClocks(reason) {
+	if (!setting(S.clocks)) return null;
+	const body = buildClockBody();
+	if (!body) return null;
+	const res = await push({ reason, body, dedupeKey: `clock|${JSON.stringify(body.ops)}` });
+	if (res?.ok && !res.skipped) {
+		sentClockIds = revealedClocks(gpcClocks() ?? {}).map((c) => c.clockId);
+	}
+	return res;
+}
+
+function scheduleClocks(reason) {
+	if (!setting(S.enabled) || !setting(S.clocks)) return;
+	if (!isPusher()) return;
+	// One global timer, unlike sheets: every clock lives in ONE setting, so a single write
+	// carries them all and there is no per-subject starvation to avoid.
+	if (clockTimer) clearTimeout(clockTimer);
+	clockTimer = setTimeout(() => {
+		clockTimer = null;
+		if (!setting(S.enabled) || !setting(S.clocks) || !isPusher()) return;
+		pushClocks(reason);
+	}, DEBOUNCE_MS);
+}
+
+/**
+ * OUR FACES ON GPC'S PANEL.
+ *
+ * GPC binds click and contextmenu to `.clock-element` ITSELF and resolves the clock with
+ * `event.target.closest('[data-id]')` (its clock-panel.mjs). So we replace that element's
+ * CHILDREN and never the element — do that and click-to-advance and right-click-to-decrement
+ * both keep working through our image. Edit and delete live in a sibling `.name` div and are
+ * never touched.
+ *
+ * A clock the resolver cannot map keeps GPC's own drawing. That is the point of returning null
+ * rather than guessing: a wrong face is worse than no face.
+ */
+function paintClockFaces(app, html) {
+	if (!setting(S.faces)) return;
+	const root = html instanceof HTMLElement ? html : html?.[0];
+	if (!root) return;
+	const active = gpcClocks();
+	if (!active) return;
+	for (const entry of root.querySelectorAll('.clock-entry[data-id]')) {
+		const clock = active[entry.dataset.id];
+		const graphic = entry.querySelector('.clock-element');
+		if (!clock || !graphic) continue;
+		const face = faceFor(clock, MODULE_ID);
+		if (!face) continue;
+		const img = document.createElement('img');
+		img.className = 'rh-face';
+		img.src = face.src;
+		img.alt = `${clock.value}/${clock.max}`;
+		graphic.replaceChildren(img);
+		entry.classList.add('rh-faced', `rh-kind-${face.kind}`);
+	}
+}
+
 Hooks.once('init', () => {
 	game.settings.register(MODULE_ID, S.endpoint, {
 		name: 'RIPPERS_HERALD.Settings.Endpoint.Name',
@@ -502,6 +595,24 @@ Hooks.once('init', () => {
 			sheetTimers.clear();
 		},
 	});
+	game.settings.register(MODULE_ID, S.clocks, {
+		name: 'RIPPERS_HERALD.Settings.Clocks.Name',
+		hint: 'RIPPERS_HERALD.Settings.Clocks.Hint',
+		scope: 'world',
+		config: true,
+		type: Boolean,
+		default: true,
+		onChange: (v) => { if (!v && clockTimer) { clearTimeout(clockTimer); clockTimer = null; } },
+	});
+	game.settings.register(MODULE_ID, S.faces, {
+		name: 'RIPPERS_HERALD.Settings.Faces.Name',
+		hint: 'RIPPERS_HERALD.Settings.Faces.Hint',
+		scope: 'world',
+		config: true,
+		type: Boolean,
+		default: true,
+		onChange: () => globalThis.clockPanel?.render(true),
+	});
 	game.settings.register(MODULE_ID, S.verbose, {
 		name: 'RIPPERS_HERALD.Settings.Verbose.Name',
 		hint: 'RIPPERS_HERALD.Settings.Verbose.Hint',
@@ -529,6 +640,14 @@ Hooks.once('init', () => {
 	Hooks.on('updateActor', (actor, changed) => {
 		if (changed?.ownership) scheduleSheet(actor, 'ownership');
 	});
+
+	// Clocks. GPC writes every clock into ONE world setting, so `updateSetting` on that key is
+	// the change signal — and `createSetting` too, because the setting row does not exist until
+	// the first clock is ever made in a world. An update-only listener misses the first clock.
+	const isGpcSetting = (s) => s?.key === `${GPC_ID}.${GPC_SETTING}`;
+	Hooks.on('updateSetting', (s) => { if (isGpcSetting(s)) scheduleClocks('updateSetting'); });
+	Hooks.on('createSetting', (s) => { if (isGpcSetting(s)) scheduleClocks('createSetting'); });
+	Hooks.on('renderClockPanel', paintClockFaces);
 
 	Hooks.on('getHeaderControlsApplicationV2', sheetHeaderControls);
 	Hooks.on('getActorSheetHeaderButtons', sheetHeaderControls);
@@ -572,6 +691,11 @@ Hooks.once('ready', () => {
 			regenerateSheetLink,
 			copySheetLink,
 			guiseApi,
+			// clocks (v3)
+			pushClocks,
+			buildClockBody,
+			revealedClocks: () => revealedClocks(gpcClocks() ?? {}),
+			faceFor: (c) => faceFor(c, MODULE_ID),
 			pushNow: (opts) => push({ reason: 'manual', ...opts }),
 			isPusher,
 			get lastResult() {
@@ -583,6 +707,7 @@ Hooks.once('ready', () => {
 	// One push at ready so a freshly opened world publishes its date without waiting
 	// for the clock to move. Quiet: an unconfigured install must not nag.
 	schedulePush('ready');
+	scheduleClocks('ready');
 	watchForCalendar();
 	log(`ready — ${isPusher() ? 'this client is the pusher' : 'another GM is the pusher'}`);
 });

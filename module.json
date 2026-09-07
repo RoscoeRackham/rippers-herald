@@ -2,7 +2,7 @@
 	"id": "rippers-herald",
 	"title": "Rippers — Herald (Calendar Sync)",
 	"description": "One-way, GM-side push from Foundry to the Rippers Unmasked companion app: the world clock, so the almanack's today marker follows the table, and the character sheets of actors your players own, readable at /sheet/<link> with no login. Keys on core `updateWorldTime` and `game.time.worldTime` (the authoritative clock); Calendaria is used only to render the display date. Sheet payloads are built by rippers-guise's own export, never invented here, and only actors a non-GM user OWNS are ever published. Only the active GM posts, pushes are debounced per subject, and the module holds no Supabase keys — just an endpoint and a shared secret in world settings. The journal-page half of the herald spec is deliberately NOT in this build. A personal-table module — not for redistribution.",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"url": "https://github.com/RoscoeRackham/rippers-herald",
 	"manifest": "https://github.com/RoscoeRackham/rippers-herald/releases/latest/download/module.json",
 	"download": "https://github.com/RoscoeRackham/rippers-herald/releases/latest/download/rippers-herald.zip",
@@ -31,6 +31,11 @@
 				"id": "calendaria",
 				"type": "module",
 				"reason": "Calendaria renders the display date. It is optional: without it the herald still pushes the authoritative worldTime and falls back to core `game.time.components` for the display string. Verified against Calendaria v1.0.17."
+			},
+			{
+				"id": "global-progress-clocks",
+				"type": "module",
+				"reason": "The clock half reads Global Progress Clocks' own world setting and dresses its panel in our art. Optional: without it the calendar and sheet halves are unaffected. Verified against GPC 1.3.3."
 			}
 		],
 		"requires": [
@@ -48,7 +53,10 @@
 	"socket": false,
 	"flags": {
 		"rippers-herald": {
-			"note": "Calendar + sheets. Journal-page sync (SPEC-foundry-herald-sync.md §1-§2) is DEFERRED, not cancelled: no journal hook is registered here. Sheets follow lodge-docs/SPEC-herald-sheets.md; the gate is a non-GM OWNER, and the debounce is per actor."
+			"note": "Calendar + sheets + clocks. Journal-page sync (SPEC-foundry-herald-sync.md) is DEFERRED, not cancelled. Clocks follow lodge-docs/SPEC-herald-clocks.md: the reveal gate is GPC's own per-clock `private` flag and there is NO override. Prosperity art is deliberately not shipped (owner, 8 Sep 2026)."
 		}
-	}
+	},
+	"styles": [
+		"styles/clock-faces.css"
+	]
 }

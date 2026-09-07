@@ -1,0 +1,47 @@
+/* Our clock faces on Global Progress Clocks' own panel.
+ *
+ * Every selector here is GPC's, and every rule is an override of something GPC sets for its
+ * conic-gradient pie. GPC's `.clock-entry` is a FIXED-HEIGHT (34px) flex ROW and its
+ * `.clock-element` is forced square (aspect-ratio 1/1, border-radius 50%). A full-width bar
+ * inside that overflows UPWARD — measured at y = -103, above the panel — so a faced entry has
+ * to be allowed to grow and stack before the art can sit in it.
+ *
+ * Scoped to `.rh-faced`, which we add only to entries we actually painted, so a clock we could
+ * not map keeps GPC's drawing and GPC's layout untouched. */
+
+#clock-panel .clock-entry.rh-faced {
+	height: auto;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 2px;
+	/* The faces are transparent PNGs; GPC's per-entry tint would otherwise show through them
+	 * and muddy the art. This is the --entry-background polish. */
+	background: none;
+	border: none;
+	box-shadow: none;
+}
+
+#clock-panel .clock-entry.rh-faced .clock-element {
+	width: 100%;
+	height: auto;
+	aspect-ratio: auto;
+	align-self: stretch;
+	background: none;
+	border: none;
+	border-radius: 0;
+}
+
+/* The pie's spokes are children of .clock-element; we replaced the children, but a re-render
+ * that beats us to it should not flash them. */
+#clock-panel .clock-entry.rh-faced .clock-element .spoke { display: none; }
+
+#clock-panel .clock-entry.rh-faced img.rh-face {
+	display: block;
+	width: 100%;
+	height: auto;
+	cursor: pointer;   /* GPC's click-to-advance still works through the image */
+}
+
+/* The bars are wide (miasma 1360x236, damage-control 680x164); give the panel room rather than
+ * letting GPC's default column squeeze them to nothing. */
+#clock-panel .clock-display { width: 320px; }

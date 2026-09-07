@@ -606,6 +606,30 @@ function paintClockFaces(app, html) {
 	}
 }
 
+/**
+ * CONFIGURING THE MODULE MUST PUBLISH SOMETHING.
+ *
+ * The gap this closes, found when the owner installed 0.3.0 and saw no clock: the only pushes were
+ * at `ready` and on a change to the thing being published. So a GM who opens his world, THEN fills
+ * in the endpoint and secret, has already missed the one push of the session — and nothing tries
+ * again until he happens to edit a clock or reloads. Every symptom of a misconfiguration therefore
+ * outlived the fix for it, and the remedy ("reload the world") is not something anyone would guess.
+ *
+ * Now: changing the endpoint, the secret, the master switch or the clock switch re-publishes the
+ * calendar and the clocks immediately. Both are single, cheap payloads.
+ *
+ * NOT sheets — those are one payload per actor and a fan-out on every settings keystroke would be
+ * worse than the problem. A sheet publishes on that character's next change, which in practice is
+ * the next time anyone touches it. ⚠ A GM who configures the module and then touches no actor still
+ * sees no sheets until he does; that is a smaller version of the same gap and it is written down
+ * rather than fixed here.
+ */
+function onConfigured(reason) {
+	if (!game.ready) return;          // `init`-time registration fires these before the world exists
+	schedulePush(reason);
+	scheduleClocks(reason);
+}
+
 Hooks.once('init', () => {
 	game.settings.register(MODULE_ID, S.endpoint, {
 		name: 'RIPPERS_HERALD.Settings.Endpoint.Name',
@@ -614,6 +638,7 @@ Hooks.once('init', () => {
 		config: true,
 		type: String,
 		default: '',
+		onChange: () => onConfigured('endpoint-set'),
 	});
 	game.settings.register(MODULE_ID, S.sharedSecret, {
 		name: 'RIPPERS_HERALD.Settings.Secret.Name',
@@ -622,6 +647,7 @@ Hooks.once('init', () => {
 		config: true,
 		type: String,
 		default: '',
+		onChange: () => onConfigured('secret-set'),
 	});
 	game.settings.register(MODULE_ID, S.enabled, {
 		name: 'RIPPERS_HERALD.Settings.Enabled.Name',
@@ -631,10 +657,12 @@ Hooks.once('init', () => {
 		type: Boolean,
 		default: true,
 		onChange: (v) => {
-			if (!v && timer) {
-				clearTimeout(timer);
-				timer = null;
+			if (!v) {
+				if (timer) { clearTimeout(timer); timer = null; }
+				if (clockTimer) { clearTimeout(clockTimer); clockTimer = null; }
+				return;
 			}
+			onConfigured('enabled-on');
 		},
 	});
 	game.settings.register(MODULE_ID, S.sheets, {
@@ -657,7 +685,12 @@ Hooks.once('init', () => {
 		config: true,
 		type: Boolean,
 		default: true,
-		onChange: (v) => { if (!v && clockTimer) { clearTimeout(clockTimer); clockTimer = null; } },
+		onChange: (v) => {
+			if (!v) { if (clockTimer) { clearTimeout(clockTimer); clockTimer = null; } return; }
+			// Turning clock publishing ON must publish the clocks that are already revealed —
+			// otherwise the switch appears to do nothing until someone edits a clock.
+			scheduleClocks('clocks-on');
+		},
 	});
 	game.settings.register(MODULE_ID, S.faces, {
 		name: 'RIPPERS_HERALD.Settings.Faces.Name',

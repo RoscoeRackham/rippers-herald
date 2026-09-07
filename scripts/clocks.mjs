@@ -79,11 +79,22 @@ export function revealedClocks(activeClocks) {
 	for (const [id, c] of Object.entries(activeClocks ?? {})) {
 		if (!c || c.private) continue;
 		if (c.type === 'points') continue;   // a points tracker is not a clock; it has no max to fill
+		const max = Math.trunc(Number(c.max) || 0);
+		if (max < 1) continue;   // 0189 requires max > 0; a zero-segment clock is not a clock
 		out.push({
 			clockId: id,
 			label: String(c.name ?? '').slice(0, 200),
-			current: Math.trunc(Number(c.value) || 0),
-			max: Math.trunc(Number(c.max) || 0),
+			// CLAMPED, and this is belt-and-braces rather than a fix for an observed hole.
+			// Driven against GPC 1.3.3, `value` came back clamped on every path: addClock with
+			// value > max, a GM lowering max under the value, and even a direct write to the
+			// world setting. Two of those clamps are locatable in its source (database.mjs:43,
+			// dialog.mjs:88); the other two I could observe but NOT find — and a behaviour you
+			// can see but cannot point at is exactly the kind that changes in a point release.
+			// 0189 now carries `check (current >= 0 and current <= max)`, so an unclamped value
+			// would not be a wrong number on the site, it would be a clock that SILENTLY FAILS
+			// to publish. One Math.min is cheaper than that failure mode.
+			current: Math.max(0, Math.min(Math.trunc(Number(c.value) || 0), max)),
+			max,
 			kind: kindOf(c.name),
 			district: districtOf(c.name),
 		});

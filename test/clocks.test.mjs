@@ -108,3 +108,19 @@ test('rows carry exactly the columns the table has, and nothing of GPC\'s intern
 	const rows = revealedClocks({ a: { id: 'a', type: 'clock', name: 'W — Miasma', value: 2, max: 6, private: false, colorId: 'red' } });
 	assert.deepEqual(Object.keys(rows[0]).sort(), ['clockId', 'current', 'district', 'kind', 'label', 'max']);
 });
+
+test('current is clamped into [0, max] before it can reach 0189\'s CHECK', () => {
+	// GPC clamps on every path I could drive, but 0189 carries `check (current >= 0 and
+	// current <= max)`, so an unclamped value would not be a wrong number — it would be a clock
+	// that silently fails to publish. Belt as well as braces.
+	const rows = revealedClocks({
+		over: { id: 'over', type: 'clock', name: 'A — Miasma', value: 99, max: 6, private: false },
+		under: { id: 'under', type: 'clock', name: 'B — Miasma', value: -4, max: 6, private: false },
+	});
+	assert.equal(rows.find((r) => r.clockId === 'over').current, 6);
+	assert.equal(rows.find((r) => r.clockId === 'under').current, 0);
+});
+
+test('a zero-segment clock is not published at all — 0189 requires max > 0', () => {
+	assert.deepEqual(revealedClocks({ z: { id: 'z', type: 'clock', name: 'Z — Miasma', value: 0, max: 0, private: false } }), []);
+});

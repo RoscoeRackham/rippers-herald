@@ -1,0 +1,10 @@
+{
+	"RIPPERS_HERALD.Settings.Endpoint.Name": "Companion app endpoint",
+	"RIPPERS_HERALD.Settings.Endpoint.Hint": "Full URL of the herald function, e.g. https://your-site.netlify.app/api/herald. Leave blank to disable pushing.",
+	"RIPPERS_HERALD.Settings.Secret.Name": "Shared secret",
+	"RIPPERS_HERALD.Settings.Secret.Hint": "Must match HERALD_SHARED_SECRET on the companion app. This authorises calendar writes to the app only — it is NOT a Supabase key, and anyone who can open a GM console can read it.",
+	"RIPPERS_HERALD.Settings.Enabled.Name": "Push the calendar",
+	"RIPPERS_HERALD.Settings.Enabled.Hint": "Off pauses all pushes without clearing the endpoint or secret.",
+	"RIPPERS_HERALD.Settings.Verbose.Name": "Log every push",
+	"RIPPERS_HERALD.Settings.Verbose.Hint": "Writes one console line per successful push. Failures are always logged."
+}

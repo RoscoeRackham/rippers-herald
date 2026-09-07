@@ -1,0 +1,5 @@
+Rippers — Herald (Calendar Sync)
+A personal-table Foundry VTT module. Not for redistribution.
+
+Contains no third-party code. Calendaria is an optional runtime peer, read through
+its public `CALENDARIA.api` only; no Calendaria code or assets are bundled.

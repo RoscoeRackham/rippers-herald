@@ -1,0 +1,43 @@
+{
+	"id": "rippers-herald",
+	"title": "Rippers — Herald (Calendar Sync)",
+	"description": "One-way, GM-side push of the world clock from Foundry to the Rippers Unmasked companion app, so the almanack's today marker follows the table's date. Keys on core `updateWorldTime` and `game.time.worldTime` (the authoritative clock); Calendaria is used only to render the display date, so the sync keeps working if Calendaria is swapped out. Only the active GM posts, pushes are debounced, and the module holds no Supabase keys — just an endpoint and a shared secret in world settings. The journal-page half of the herald spec is deliberately NOT in this build. A personal-table module — not for redistribution.",
+	"version": "0.1.0",
+	"url": "https://github.com/RoscoeRackham/rippers-herald",
+	"manifest": "https://github.com/RoscoeRackham/rippers-herald/releases/latest/download/module.json",
+	"download": "https://github.com/RoscoeRackham/rippers-herald/releases/latest/download/rippers-herald.zip",
+	"compatibility": {
+		"minimum": "13.351",
+		"verified": "13.351"
+	},
+	"authors": [
+		{
+			"name": "Austin (cubemail.exe)"
+		}
+	],
+	"esmodules": [
+		"scripts/rippers-herald.mjs"
+	],
+	"languages": [
+		{
+			"lang": "en",
+			"name": "English",
+			"path": "lang/en.json"
+		}
+	],
+	"relationships": {
+		"recommends": [
+			{
+				"id": "calendaria",
+				"type": "module",
+				"reason": "Calendaria renders the display date. It is optional: without it the herald still pushes the authoritative worldTime and falls back to core `game.time.components` for the display string. Verified against Calendaria v1.0.17."
+			}
+		]
+	},
+	"socket": false,
+	"flags": {
+		"rippers-herald": {
+			"note": "Calendar-only build. Journal-page sync (SPEC-foundry-herald-sync.md §1-§2) is DEFERRED, not cancelled: no journal hooks are registered here."
+		}
+	}
+}

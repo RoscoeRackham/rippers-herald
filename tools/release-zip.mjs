@@ -15,7 +15,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ID = 'rippers-herald';
-const PATHS = ['module.json', 'scripts', 'lang', 'README.md', 'LICENSE'];
+const PATHS = ['module.json', 'scripts', 'lang', 'styles', 'faces', 'README.md', 'LICENSE'];
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const outDir = resolve(process.argv[2] ?? root);
@@ -29,7 +29,7 @@ const listing = run('unzip', ['-l', zipPath]).toString();
 const manifest = JSON.parse(readFileSync(join(root, 'module.json'), 'utf8'));
 const fails = [];
 
-for (const f of [...(manifest.esmodules ?? []), ...(manifest.languages ?? []).map((l) => l.path)]) {
+for (const f of [...(manifest.esmodules ?? []), ...(manifest.styles ?? []), ...(manifest.languages ?? []).map((l) => l.path)]) {
 	if (!listing.includes(f)) fails.push(`declared file missing from the zip: ${f}`);
 }
 const dotPaths = listing.split('\n')

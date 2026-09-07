@@ -1,8 +1,8 @@
 {
 	"id": "rippers-herald",
 	"title": "Rippers — Herald (Calendar Sync)",
-	"description": "One-way, GM-side push of the world clock from Foundry to the Rippers Unmasked companion app, so the almanack's today marker follows the table's date. Keys on core `updateWorldTime` and `game.time.worldTime` (the authoritative clock); Calendaria is used only to render the display date, so the sync keeps working if Calendaria is swapped out. Only the active GM posts, pushes are debounced, and the module holds no Supabase keys — just an endpoint and a shared secret in world settings. The journal-page half of the herald spec is deliberately NOT in this build. A personal-table module — not for redistribution.",
-	"version": "0.1.0",
+	"description": "One-way, GM-side push from Foundry to the Rippers Unmasked companion app: the world clock, so the almanack's today marker follows the table, and the character sheets of actors your players own, readable at /sheet/<link> with no login. Keys on core `updateWorldTime` and `game.time.worldTime` (the authoritative clock); Calendaria is used only to render the display date. Sheet payloads are built by rippers-guise's own export, never invented here, and only actors a non-GM user OWNS are ever published. Only the active GM posts, pushes are debounced per subject, and the module holds no Supabase keys — just an endpoint and a shared secret in world settings. The journal-page half of the herald spec is deliberately NOT in this build. A personal-table module — not for redistribution.",
+	"version": "0.2.0",
 	"url": "https://github.com/RoscoeRackham/rippers-herald",
 	"manifest": "https://github.com/RoscoeRackham/rippers-herald/releases/latest/download/module.json",
 	"download": "https://github.com/RoscoeRackham/rippers-herald/releases/latest/download/rippers-herald.zip",
@@ -32,12 +32,23 @@
 				"type": "module",
 				"reason": "Calendaria renders the display date. It is optional: without it the herald still pushes the authoritative worldTime and falls back to core `game.time.components` for the display string. Verified against Calendaria v1.0.17."
 			}
+		],
+		"requires": [
+			{
+				"id": "rippers-guise",
+				"type": "module",
+				"manifest": "https://github.com/RoscoeRackham/rippers-guise/releases/latest/download/module.json",
+				"compatibility": {
+					"minimum": "0.7.54"
+				},
+				"reason": "Sheet payloads ARE rippers-guise's character export — this module calls buildCharacterExport(actor) and carries the result. 0.7.54 is the release that put that function on the module api (commit 71aac70). The calendar half needs nothing from guise, and keeps working if it is absent."
+			}
 		]
 	},
 	"socket": false,
 	"flags": {
 		"rippers-herald": {
-			"note": "Calendar-only build. Journal-page sync (SPEC-foundry-herald-sync.md §1-§2) is DEFERRED, not cancelled: no journal hooks are registered here."
+			"note": "Calendar + sheets. Journal-page sync (SPEC-foundry-herald-sync.md §1-§2) is DEFERRED, not cancelled: no journal hook is registered here. Sheets follow lodge-docs/SPEC-herald-sheets.md; the gate is a non-GM OWNER, and the debounce is per actor."
 		}
 	}
 }

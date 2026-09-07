@@ -6,5 +6,7 @@
 	"RIPPERS_HERALD.Settings.Enabled.Name": "Push the calendar",
 	"RIPPERS_HERALD.Settings.Enabled.Hint": "Off pauses all pushes without clearing the endpoint or secret.",
 	"RIPPERS_HERALD.Settings.Verbose.Name": "Log every push",
-	"RIPPERS_HERALD.Settings.Verbose.Hint": "Writes one console line per successful push. Failures are always logged."
+	"RIPPERS_HERALD.Settings.Verbose.Hint": "Writes one console line per successful push. Failures are always logged.",
+	"RIPPERS_HERALD.Settings.Sheets.Name": "Publish player sheets",
+	"RIPPERS_HERALD.Settings.Sheets.Hint": "Pushes the character export for any actor a player owns, so they can read it at /sheet/<link>. GM-only actors are never published. Off stops publishing but does not withdraw what is already there — use Regenerate sheet link on an actor for that."
 }

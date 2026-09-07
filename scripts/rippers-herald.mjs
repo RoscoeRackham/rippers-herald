@@ -18,6 +18,7 @@ const S = {
 	endpoint: 'endpoint',
 	sharedSecret: 'sharedSecret',
 	enabled: 'enabled',
+	sheets: 'sheets',
 	verbose: 'verbose',
 };
 
@@ -35,8 +36,13 @@ let timer = null;
  * treated as a transient hiccup, not as "Calendaria went away".
  */
 let warmCalendar = null;
-/** Serialised op of the last push the server accepted, so an unchanged clock is not re-sent. */
-let lastSentOp = null;
+/**
+ * Serialised op of the last push the server accepted, PER SUBJECT — 'calendar' for the clock,
+ * `sheet:<actorId>` for each character. One global slot would make two subjects cancel each
+ * other: a sheet push would clear the clock's memory and vice versa, and every second push
+ * would go out unnecessarily.
+ */
+const lastSentOp = new Map();
 
 function setting(key) {
 	try {
@@ -181,7 +187,7 @@ function buildPayload(reason = 'manual') {
 	};
 }
 
-async function push({ reason = 'manual', quiet = false } = {}) {
+async function push({ reason = 'manual', quiet = false, body: given = null, dedupeKey = null } = {}) {
 	const endpoint = (setting(S.endpoint) ?? '').trim();
 	const secret = (setting(S.sharedSecret) ?? '').trim();
 	if (!endpoint || !secret) {
@@ -189,9 +195,10 @@ async function push({ reason = 'manual', quiet = false } = {}) {
 		if (!quiet) warn(lastResult.error);
 		return lastResult;
 	}
-	const body = buildPayload(reason);
-	const opKey = JSON.stringify(body.ops[0]);
-	if (opKey === lastSentOp && reason !== 'manual') {
+	const body = given ?? buildPayload(reason);
+	const opKey = dedupeKey ?? JSON.stringify(body.ops[0]);
+	const dedupeSlot = dedupeKey ? dedupeKey.split('|')[0] : 'calendar';
+	if (opKey === lastSentOp.get(dedupeSlot) && reason !== 'manual') {
 		// Nothing about the clock changed. Two triggers (core's updateWorldTime and
 		// Calendaria's own) describe one event, and a settings save can land after the
 		// debounce; none of them is a reason to write the same row again.
@@ -206,7 +213,7 @@ async function push({ reason = 'manual', quiet = false } = {}) {
 		});
 		const text = await res.text().catch(() => '');
 		lastResult = { ok: res.ok, reason, status: res.status, body, response: text.slice(0, 400), at: Date.now() };
-		if (res.ok) lastSentOp = opKey;
+		if (res.ok) lastSentOp.set(dedupeSlot, opKey);
 		if (!res.ok) warn(`push failed ${res.status}`, text.slice(0, 200));
 		else if (setting(S.verbose)) log(`pushed (${reason})`, body.ops[0].display ?? body.ops[0].worldTime);
 	} catch (e) {
@@ -237,6 +244,218 @@ function schedulePush(reason) {
 		if (!setting(S.enabled) || !isPusher()) return;
 		push({ reason });
 	}, DEBOUNCE_MS);
+}
+
+
+// ===========================================================================================
+// SHEETS (v2) — lodge-docs/SPEC-herald-sheets.md
+//
+// The curated character export for actors a PLAYER actually owns, pushed to the companion app
+// and readable at /sheet/<token>. Nothing here invents a payload: rippers-guise builds it, this
+// module carries it.
+// ===========================================================================================
+
+const GUISE_ID = 'rippers-guise';
+/** The release that put collectExportParts/buildCharacterExport/exportCharacterFiles/
+ *  downloadCharacterExport on `mod.api` (rippers-guise commit 71aac70). Declared in
+ *  module.json AND checked here: a manifest requirement does not stop a world running an
+ *  older build, and a missing function would otherwise surface as a mid-push TypeError. */
+const GUISE_MIN = '0.7.54';
+const SHEET_TOKEN_FLAG = `flags.${MODULE_ID}.sheetToken`;
+
+/** Per-actor debounce timers. NOT one shared timer: a party-wide rest fires updateActor for
+ *  five actors at once, and a single slot would publish whichever landed last and silently
+ *  drop the other four. */
+const sheetTimers = new Map();
+
+const cmpVersion = (a, b) => {
+	const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+	for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+		const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+		if (d) return d < 0 ? -1 : 1;
+	}
+	return 0;
+};
+
+/** The guise export api, or null with one clear reason. */
+function guiseApi({ quiet = false } = {}) {
+	const mod = game.modules.get(GUISE_ID);
+	if (!mod?.active) {
+		if (!quiet) warn(`${GUISE_ID} is not active — sheet sync is off (the payload is its export, not ours)`);
+		return null;
+	}
+	if (cmpVersion(mod.version ?? '0', GUISE_MIN) < 0) {
+		if (!quiet) warn(`${GUISE_ID} ${mod.version} is older than ${GUISE_MIN}; buildCharacterExport is not on its api. Sheet sync is off.`);
+		return null;
+	}
+	if (typeof mod.api?.buildCharacterExport !== 'function') {
+		if (!quiet) warn(`${GUISE_ID} ${mod.version} does not expose buildCharacterExport — sheet sync is off`);
+		return null;
+	}
+	return mod.api;
+}
+
+/**
+ * THE GATE: a non-GM user holds OWNER on this actor.
+ *
+ * Deliberately stricter than the journal half's OBSERVER. This publishes a character sheet to a
+ * URL that needs no login, so the test is "a player at this table plays this character", not "a
+ * player may look at it". A GM-only actor therefore never gets a token, never a row and never a
+ * URL — there is nothing to leak because nothing is ever created.
+ */
+function playerOwned(actor) {
+	if (!actor || actor.type !== 'character') return false;
+	return game.users.filter((u) => !u.isGM).some((u) => actor.testUserPermission(u, 'OWNER'));
+}
+
+function sheetToken(actor) {
+	return foundry.utils.getProperty(actor, SHEET_TOKEN_FLAG) ?? null;
+}
+
+/**
+ * Mint a token if there is not one. `randomID` IS crypto-backed in v13 — verified in
+ * common/utils/helpers.mjs:1035, `crypto.getRandomValues` over a 62-character alphabet with
+ * modulo-bias rejection — so 24 characters is ~143 bits and no separate helper is needed.
+ *
+ * Written with update(), never setFlag(): setFlag THROWS for a scope that is not core, the
+ * system, or an active module, which is a live hazard for a GM-side tool and cost v1 two macros.
+ */
+async function ensureSheetToken(actor) {
+	const existing = sheetToken(actor);
+	if (existing) return existing;
+	const token = foundry.utils.randomID(24);
+	await actor.update({ [SHEET_TOKEN_FLAG]: token });
+	return token;
+}
+
+async function buildSheetBody(actor, op) {
+	if (op === 'delete') {
+		return { worldId: game.world?.id ?? null, kind: 'sheet', ops: [{ op: 'delete', actorId: actor.id }] };
+	}
+	const api = guiseApi();
+	if (!api) return null;
+	const payload = await api.buildCharacterExport(actor);
+	const token = await ensureSheetToken(actor);
+	return {
+		worldId: game.world?.id ?? null,
+		kind: 'sheet',
+		ops: [{ op: 'upsert', actorId: actor.id, token, name: actor.name, schemaVersion: payload?.schemaVersion ?? null, payload }],
+	};
+}
+
+/**
+ * One actor's push. An actor that has LOST its last player owner sends a DELETE rather than
+ * falling silent — otherwise a character who left the table stays published forever.
+ */
+async function pushSheet(actor, reason) {
+	if (!setting(S.sheets)) return null;
+	if (!actor?.id) return null;
+	const owned = playerOwned(actor);
+	if (!owned && !sheetToken(actor)) return null;   // never published; nothing to withdraw
+	const body = await buildSheetBody(actor, owned ? 'upsert' : 'delete');
+	if (!body) return null;
+	// Dedupe per actor: sheets are edited far more often than they change.
+	return push({ reason, body, dedupeKey: `sheet:${actor.id}|${JSON.stringify(body.ops[0])}` });
+}
+
+function scheduleSheet(actor, reason) {
+	if (!setting(S.enabled) || !setting(S.sheets)) return;
+	if (!isPusher()) return;
+	if (!actor?.id) return;
+	const prev = sheetTimers.get(actor.id);
+	if (prev) clearTimeout(prev);
+	sheetTimers.set(actor.id, setTimeout(() => {
+		sheetTimers.delete(actor.id);
+		if (!setting(S.enabled) || !setting(S.sheets) || !isPusher()) return;
+		pushSheet(actor, reason);
+	}, DEBOUNCE_MS));
+}
+
+/** Regenerate: a NEW token, and the old row dies with it. */
+async function regenerateSheetLink(actor) {
+	const old = sheetToken(actor);
+	if (old) {
+		// Withdraw first. The function replaces by ACTOR, so this is belt-and-braces rather than
+		// load-bearing — but a leaked link must stop working when the GM says so, not whenever
+		// the next update happens to land.
+		await push({ reason: 'regenerate-withdraw', body: { worldId: game.world?.id ?? null, kind: 'sheet', ops: [{ op: 'delete', actorId: actor.id }] }, dedupeKey: `sheet:${actor.id}|withdraw-${Date.now()}` });
+	}
+	const token = foundry.utils.randomID(24);
+	await actor.update({ [SHEET_TOKEN_FLAG]: token });
+	lastSentOp.delete(`sheet:${actor.id}`);
+	await pushSheet(actor, 'regenerate');
+	return sheetUrl(token);
+}
+
+/** The player-facing URL, derived from the configured endpoint's origin. */
+function sheetUrl(token) {
+	const endpoint = (setting(S.endpoint) ?? '').trim();
+	if (!endpoint || !token) return null;
+	try {
+		return `${new URL(endpoint).origin}/sheet/${token}`;
+	} catch {
+		return null;
+	}
+}
+
+async function copySheetLink(actor) {
+	const token = await ensureSheetToken(actor);
+	const url = sheetUrl(token);
+	if (!url) {
+		ui.notifications?.warn('Set the herald endpoint in Module Settings first.');
+		return null;
+	}
+	await pushSheet(actor, 'copy-link');
+	await game.clipboard?.copyPlainText?.(url);
+	ui.notifications?.info(`Sheet link copied for ${actor.name}.`);
+	return url;
+}
+
+/**
+ * GM-only header buttons on a character sheet. Foundry 13 fires `getHeaderControlsApplicationV2`
+ * for ApplicationV2 sheets and the older `getActorSheetHeaderButtons` for V1 ones; projectfu's
+ * sheet is V1-shaped, and rippers-guise's is its own class, so BOTH are registered rather than
+ * guessing which one a given world will use.
+ */
+function sheetHeaderControls(app, controls) {
+	const actor = app?.actor ?? app?.document;
+	if (!actor || !game.user?.isGM) return;
+	if (actor.type !== 'character') return;
+	controls.unshift(
+		{
+			label: 'Copy sheet link',
+			icon: 'fas fa-link',
+			class: 'herald-copy-link',
+			action: 'heraldCopyLink',
+			onClick: () => copySheetLink(actor),
+			onclick: () => copySheetLink(actor),
+		},
+		{
+			label: 'Regenerate sheet link',
+			icon: 'fas fa-rotate',
+			class: 'herald-regen-link',
+			action: 'heraldRegenLink',
+			onClick: () => confirmRegenerate(actor),
+			onclick: () => confirmRegenerate(actor),
+		},
+	);
+}
+
+/** Regenerating breaks every copy of the old link, including the player's bookmark. Ask. */
+async function confirmRegenerate(actor) {
+	const proceed = await foundry.applications.api.DialogV2.confirm({
+		window: { title: 'Regenerate sheet link' },
+		content: `<p>Issue a new link for <strong>${foundry.utils.escapeHTML?.(actor.name) ?? actor.name}</strong>?</p>
+			<p>The current link stops working immediately — including any copy the player has bookmarked.</p>`,
+		modal: true,
+	}).catch(() => false);
+	if (!proceed) return null;
+	const url = await regenerateSheetLink(actor);
+	if (url) {
+		await game.clipboard?.copyPlainText?.(url);
+		ui.notifications?.info(`New sheet link copied for ${actor.name}.`);
+	}
+	return url;
 }
 
 Hooks.once('init', () => {
@@ -270,6 +489,19 @@ Hooks.once('init', () => {
 			}
 		},
 	});
+	game.settings.register(MODULE_ID, S.sheets, {
+		name: 'RIPPERS_HERALD.Settings.Sheets.Name',
+		hint: 'RIPPERS_HERALD.Settings.Sheets.Hint',
+		scope: 'world',
+		config: true,
+		type: Boolean,
+		default: true,
+		onChange: (v) => {
+			if (v) return;
+			for (const t of sheetTimers.values()) clearTimeout(t);
+			sheetTimers.clear();
+		},
+	});
 	game.settings.register(MODULE_ID, S.verbose, {
 		name: 'RIPPERS_HERALD.Settings.Verbose.Name',
 		hint: 'RIPPERS_HERALD.Settings.Verbose.Hint',
@@ -284,6 +516,22 @@ Hooks.once('init', () => {
 	// same debounce, so a doubled trigger is still one POST.
 	Hooks.on('updateWorldTime', () => schedulePush('updateWorldTime'));
 	Hooks.on('calendaria.dateTimeChange', () => schedulePush('calendaria.dateTimeChange'));
+
+	// Sheets. An item change is an actor change as far as the sheet is concerned — equipping a
+	// weapon alters the export as much as taking damage does — so the item hooks resolve to the
+	// parent actor rather than being ignored.
+	Hooks.on('updateActor', (actor) => scheduleSheet(actor, 'updateActor'));
+	Hooks.on('createItem', (item) => scheduleSheet(item?.parent, 'createItem'));
+	Hooks.on('updateItem', (item) => scheduleSheet(item?.parent, 'updateItem'));
+	Hooks.on('deleteItem', (item) => scheduleSheet(item?.parent, 'deleteItem'));
+	// Ownership can change without touching the actor's data, and losing the last player owner
+	// is precisely when a published sheet must be WITHDRAWN.
+	Hooks.on('updateActor', (actor, changed) => {
+		if (changed?.ownership) scheduleSheet(actor, 'ownership');
+	});
+
+	Hooks.on('getHeaderControlsApplicationV2', sheetHeaderControls);
+	Hooks.on('getActorSheetHeaderButtons', sheetHeaderControls);
 });
 
 /**
@@ -315,6 +563,15 @@ Hooks.once('ready', () => {
 		mod.api = {
 			readCalendar,
 			buildPayload,
+			// sheets (v2)
+			playerOwned,
+			sheetToken,
+			sheetUrl,
+			pushSheet,
+			buildSheetBody,
+			regenerateSheetLink,
+			copySheetLink,
+			guiseApi,
 			pushNow: (opts) => push({ reason: 'manual', ...opts }),
 			isPusher,
 			get lastResult() {
